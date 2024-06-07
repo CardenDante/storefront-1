@@ -20,7 +20,7 @@ class MpesaService
     public function initiateSTKPush($customer, $amount, $currency, $checkoutOptions)
     {
         $reference = abs(rand(1000000, 99999999999));
-        $msisdn = $customer['phone_number'];
+        $msisdn = $customer['phone'];
         $reference_one = "TEST_COLLECTION";
         $reference_two = "TEST_COLLECTION";
         $mobile_callback_url = 'http://' . $_SERVER['HTTP_HOST'] . '/mobile_callback_url/' . $reference;

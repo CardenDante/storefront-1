@@ -86,57 +86,59 @@ class CheckoutController extends Controller
 
     public static function initializeMpesaSTKCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
     {
-        $mpesaConfig = $gateway->config['mpesa_stk'];
-        
-        // Ensure all required config values are present
-        $requiredKeys = ['merchant_id', 'pass_key', 'consumer_key', 'consumer_secret'];
-        foreach ($requiredKeys as $key) {
-            if (!isset($mpesaConfig[$key])) {
-                return response()->error("Missing required Mpesa configuration: $key");
-            }
-        }
+        $isPickup = $checkoutOptions->is_pickup;
 
-        $mpesaService = new MpesaService(
-            $mpesaConfig['merchant_id'], 
-            $mpesaConfig['pass_key'], 
-            $mpesaConfig['consumer_key'], 
-            $mpesaConfig['consumer_secret']
-        );
-
-        $amount = static::calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions);
+        // get amount/subtotal
+        $amount   = static::calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions);
         $currency = $cart->currency ?? session('storefront_currency');
-        $isPickup = $checkoutOptions['is_pickup'];
 
-        try {
-            $mpesaResponse = $mpesaService->initiateSTKPush($customer, $amount, $currency, $checkoutOptions);
-
-            $checkout = Checkout::create([
-                'company_uuid' => session('company'),
-                'store_uuid' => session('storefront_store'),
-                'network_uuid' => session('storefront_network'),
-                'cart_uuid' => $cart->uuid,
-                'gateway_uuid' => $gateway->uuid,
-                'service_quote_uuid' => $serviceQuote->uuid,
-                'owner_uuid' => $customer->uuid,
-                'owner_type' => 'fleet-ops:contact',
-                'amount' => $amount,
-                'currency' => $currency,
-                'is_pickup' => $isPickup,
-                'options' => $checkoutOptions,
-                'cart_state' => $cart->toArray(),
-            ]);
-
-            return response()->json([
-                'mpesaResponse' => $mpesaResponse,
-                'token' => $checkout->token,
-            ]);
-        } catch (\Exception $e) {
-            return response()->error($e->getMessage());
+        // check for required MPESA configuration
+        if (!isset($gateway->config->mpesa_stk)) {
+            return response()->error('Gateway not configured correctly!');
         }
+
+        $mpesaConfig = $gateway->config->mpesa_stk;
+        $mpesaService = new MpesaService($mpesaConfig);
+
+        // Log details before initiating STK push
+        \Log::info('Initiating Mpesa STK Push', [
+            'customer' => $customer,
+            'amount' => $amount,
+            'currency' => $currency,
+            'checkoutOptions' => $checkoutOptions,
+        ]);
+
+        $mpesaResponse = $mpesaService->initiateSTKPush($customer, $amount, $currency, $checkoutOptions);
+
+        if (!$mpesaResponse) {
+            return response()->error('Error initiating Mpesa STK Push');
+        }
+
+        // create checkout token
+        $checkout = Checkout::create([
+            'company_uuid'       => session('company'),
+            'store_uuid'         => session('storefront_store'),
+            'network_uuid'       => session('storefront_network'),
+            'cart_uuid'          => $cart->uuid,
+            'gateway_uuid'       => $gateway->uuid,
+            'service_quote_uuid' => $serviceQuote->uuid,
+            'owner_uuid'         => $customer->uuid,
+            'owner_type'         => 'fleet-ops:contact',
+            'amount'             => $amount,
+            'currency'           => $currency,
+            'is_pickup'          => $isPickup,
+            'options'            => $checkoutOptions,
+            'cart_state'         => $cart->toArray(),
+        ]);
+
+        return response()->json([
+            'mpesaResponse' => $mpesaResponse,
+            'token'         => $checkout->token,
+        ]);
     }
 }
 
-    public static function initializeCashCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
+       public static function initializeCashCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
     {
         // check if pickup order
         $isPickup = $checkoutOptions->is_pickup;
