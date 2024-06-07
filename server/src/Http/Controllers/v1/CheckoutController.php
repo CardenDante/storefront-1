@@ -72,7 +72,7 @@ class CheckoutController extends Controller
             return static::initializeStripeCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
         }
 
-        if ($gateway->sMpesaStkGateway) {
+        if ($gateway->isMpesaStkGateway) {
             return static::initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
         }
 
