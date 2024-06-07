@@ -140,23 +140,6 @@ class Gateway extends StorefrontModel
         return $this->type === 'mpesa_stk';
     }
 
-    /**
-     * Generates a new M-Pesa STK push gateway.
-     */
-    public static function mpesaStk($attributes = ['sandbox' => false]): Gateway
-    {
-        return new static([
-            'public_id'    => 'gateway_mpesa_stk',
-            'name'         => 'M-Pesa STK Push',
-            'code'         => 'mpesa_stk',
-            'type'         => 'mpesa_stk',
-            'sandbox'      => $attributes['sandbox'],
-            'return_url'   => null,
-            'callback_url' => null,
-            ...$attributes,
-        ]);
-    }
-
     public function getIsStripeGatewayAttribute()
     {
         return $this->type === 'stripe';
