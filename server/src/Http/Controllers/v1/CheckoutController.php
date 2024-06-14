@@ -24,7 +24,7 @@ use Fleetbase\Storefront\Models\Store;
 use Fleetbase\Storefront\Models\StoreLocation;
 use Fleetbase\Storefront\Notifications\StorefrontOrderPreparing;
 use Fleetbase\Storefront\Support\QPay;
-use Fleetbase\Storefront\Support\MpesaService;
+use Fleetbase\Storefront\Support\MpesaStkpush;
 use Fleetbase\Storefront\Support\Storefront;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -84,21 +84,21 @@ class CheckoutController extends Controller
         return response()->error('Unable to initialize checkout!');
     }
 
-    public static function initializeMpesaSTKCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
+    public function initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions)
     {
         $isPickup = $checkoutOptions->is_pickup;
 
         // get amount/subtotal
-        $amount   = static::calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions);
+        $amount = $this->calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions);
         $currency = $cart->currency ?? session('storefront_currency');
 
         // check for required MPESA configuration
-        if (!isset($gateway->config->mpesa_stk)) {
-            return response()->error('Gateway not configured correctly!');
+        if (!isset($gateway['mpesa_stk'])) {
+            return response()->json(['error' => 'Gateway not configured correctly!'], 400);
         }
 
-        $mpesaConfig = $gateway->config->mpesa_stk;
-        $mpesaService = new MpesaService($mpesaConfig);
+        $mpesaConfig = $gateway['mpesa_stk'];
+        $mpesaService = new MpesaStkpush($mpesaConfig);
 
         // Log details before initiating STK push
         \Log::info('Initiating Mpesa STK Push', [
@@ -108,11 +108,12 @@ class CheckoutController extends Controller
             'checkoutOptions' => $checkoutOptions,
         ]);
 
-        $mpesaResponse = $mpesaService->initiateSTKPush($customer, $amount, $currency, $checkoutOptions);
+        $mpesaResponse = $mpesaService->lipaNaMpesa($amount, $this->formatPhone($customer->phone), 'Transaction#' . Str::random(10));
 
         if (!$mpesaResponse) {
-            return response()->error('Error initiating Mpesa STK Push');
+            return response()->json(['error' => 'Error initiating Mpesa STK Push'], 500);
         }
+    
 
         // create checkout token
         $checkout = Checkout::create([
@@ -136,7 +137,7 @@ class CheckoutController extends Controller
             'token'         => $checkout->token,
         ]);
     }
-}
+
 
        public static function initializeCashCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
     {
@@ -1001,4 +1002,4 @@ class CheckoutController extends Controller
 
         return $tipAmount;
     }
-}
+ }
