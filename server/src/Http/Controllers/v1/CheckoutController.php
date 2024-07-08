@@ -33,6 +33,21 @@ use Stripe\Exception\InvalidRequestException;
 
 class CheckoutController extends Controller
 {
+    protected $mpesa;
+
+    public function __construct()
+    {
+        $config = [
+            'short_code' => config('mpesa.short_code'),
+            'consumer_key' => config('mpesa.consumer_key'),
+            'consumer_secret' => config('mpesa.consumer_secret'),
+            'passkey' => config('mpesa.passkey'),
+            'callback_url' => config('mpesa.callback_url'),
+            'env' => config('mpesa.env'), // 'sandbox' or 'live'
+        ];
+        $this->mpesa = new MpesaStkpush($config);
+    }
+
     public function beforeCheckout(InitializeCheckoutRequest $request)
     {
         $gatewayCode      = $request->input('gateway');
@@ -113,7 +128,6 @@ class CheckoutController extends Controller
         if (!$mpesaResponse) {
             return response()->json(['error' => 'Error initiating Mpesa STK Push'], 500);
         }
-    
 
         // create checkout token
         $checkout = Checkout::create([
@@ -138,7 +152,44 @@ class CheckoutController extends Controller
         ]);
     }
 
+    public function mpesaCallback(Request $request)
+    {
+        // Log the callback request for debugging
+        Log::info('Mpesa Callback', $request->all());
 
+        // Process the callback data
+        $callbackData = $request->all();
+        
+        // Verify the data and update your database as needed
+        // Example: Check if the transaction was successful
+        if ($callbackData['Body']['stkCallback']['ResultCode'] == 0) {
+            // Transaction was successful
+            // Extract the required information
+            $transactionId = $callbackData['Body']['stkCallback']['CallbackMetadata']['Item'][1]['Value'];
+            $amount = $callbackData['Body']['stkCallback']['CallbackMetadata']['Item'][0]['Value'];
+            $phoneNumber = $callbackData['Body']['stkCallback']['CallbackMetadata']['Item'][4]['Value'];
+
+            // Update your database with the transaction details
+            // Example:
+            // Payment::where('transaction_id', $transactionId)->update(['status' => 'completed']);
+
+            // Optionally, you can check the transaction status here
+            $statusResponse = $this->mpesa->status($transactionId);
+
+            // Check the status response and finalize the order
+            if ($statusResponse['ResponseCode'] == '0') {
+                // Complete the order
+                // Example:
+                // Order::where('transaction_id', $transactionId)->update(['status' => 'completed']);
+            }
+        } else {
+            // Transaction failed
+            // Handle the failure accordingly
+        }
+
+        // Return a response to Mpesa
+        return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Success']);
+    }
        public static function initializeCashCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
     {
         // check if pickup order

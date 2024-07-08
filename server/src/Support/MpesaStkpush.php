@@ -23,18 +23,22 @@ class MpesaStkpush
         $this->env = $config['env']; // 'sandbox' or 'live'
     }
 
-    public function lipaNaMpesa($amount, $phone, $accountReference)
+    protected function getAccessToken()
     {
-        $timestamp = date('YmdHis');
-        $password = base64_encode($this->short_code . $this->passkey . $timestamp);
-
         $access_token_url = ($this->env === 'live') ? 'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials' : 'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials';
 
         $response = Http::withHeaders([
             'Authorization' => 'Basic ' . base64_encode($this->consumer_key . ':' . $this->consumer_secret),
         ])->get($access_token_url);
 
-        $access_token = $response->json()['access_token'];
+        return $response->json()['access_token'];
+    }
+
+    public function lipaNaMpesa($amount, $phone, $accountReference)
+    {
+        $timestamp = date('YmdHis');
+        $password = base64_encode($this->short_code . $this->passkey . $timestamp);
+        $access_token = $this->getAccessToken();
 
         $stk_push_url = ($this->env === 'live') ? 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest' : 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest';
 
@@ -62,14 +66,7 @@ class MpesaStkpush
     {
         $timestamp = date('YmdHis');
         $password = base64_encode($this->short_code . $this->passkey . $timestamp);
-
-        $access_token_url = ($this->env === 'live') ? 'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials' : 'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials';
-
-        $response = Http::withHeaders([
-            'Authorization' => 'Basic ' . base64_encode($this->consumer_key . ':' . $this->consumer_secret),
-        ])->get($access_token_url);
-
-        $access_token = $response->json()['access_token'];
+        $access_token = $this->getAccessToken();
 
         $status_url = ($this->env === 'live') ? 'https://api.safaricom.co.ke/mpesa/transactionstatus/v1/query' : 'https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query';
 
@@ -92,3 +89,4 @@ class MpesaStkpush
         return $response->json();
     }
 }
+?>
