@@ -106,7 +106,7 @@ class CheckoutController extends Controller
         return static::initializeQpayCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
     }
 
-    return response()->error('Unable to initialize checkout!');
+    return response()->error('Failed to initialize checkout!');
 }
 
 public function initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions)
