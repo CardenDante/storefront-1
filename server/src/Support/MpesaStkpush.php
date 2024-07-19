@@ -3,15 +3,16 @@
 namespace Fleetbase\Storefront\Support;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class MpesaStkpush
 {
+    protected $short_code;
     protected $consumer_key;
     protected $consumer_secret;
     protected $passkey;
-    protected $env;
-    protected $short_code;
     protected $callback_url;
+    protected $env;
 
     public function __construct($config)
     {
@@ -31,6 +32,12 @@ class MpesaStkpush
             'Authorization' => 'Basic ' . base64_encode($this->consumer_key . ':' . $this->consumer_secret),
         ])->get($access_token_url);
 
+        if ($response->failed()) {
+            Log::error('Failed to get access token', ['response' => $response->body()]);
+            file_put_contents(__DIR__ . '/../../error_log.txt', "Failed to get access token: " . $response->body() . "\n", FILE_APPEND);
+            return null;
+        }
+
         return $response->json()['access_token'];
     }
 
@@ -39,6 +46,10 @@ class MpesaStkpush
         $timestamp = date('YmdHis');
         $password = base64_encode($this->short_code . $this->passkey . $timestamp);
         $access_token = $this->getAccessToken();
+
+        if (!$access_token) {
+            return null;
+        }
 
         $stk_push_url = ($this->env === 'live') ? 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest' : 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest';
 
@@ -59,34 +70,12 @@ class MpesaStkpush
             'TransactionDesc' => 'Payment for ' . $accountReference,
         ]);
 
-        return $response->json();
-    }
-
-    public function status($transactionId)
-    {
-        $timestamp = date('YmdHis');
-        $password = base64_encode($this->short_code . $this->passkey . $timestamp);
-        $access_token = $this->getAccessToken();
-
-        $status_url = ($this->env === 'live') ? 'https://api.safaricom.co.ke/mpesa/transactionstatus/v1/query' : 'https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query';
-
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $access_token,
-            'Content-Type' => 'application/json',
-        ])->post($status_url, [
-            'Initiator' => 'apiop',
-            'SecurityCredential' => $password,
-            'CommandID' => 'TransactionStatusQuery',
-            'TransactionID' => $transactionId,
-            'PartyA' => $this->short_code,
-            'IdentifierType' => '4',
-            'ResultURL' => $this->callback_url,
-            'QueueTimeOutURL' => $this->callback_url,
-            'Remarks' => 'Transaction status query',
-            'Occasion' => 'Transaction status query',
-        ]);
+        if ($response->failed()) {
+            Log::error('STK Push request failed', ['response' => $response->body()]);
+            file_put_contents(__DIR__ . '/../../error_log.txt', "STK Push request failed: " . $response->body() . "\n", FILE_APPEND);
+            return null;
+        }
 
         return $response->json();
     }
 }
-?>

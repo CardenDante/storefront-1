@@ -29,186 +29,179 @@ use Fleetbase\Storefront\Support\Storefront;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
-use Stripe\Exception\InvalidRequestException;
+use Illuminate\Support\Facades\Log;
 
 class CheckoutController extends Controller
 {
-    protected $mpesa;
-
-    public function __construct()
-    {
-        $config = [
-            'short_code' => config('mpesa.short_code'),
-            'consumer_key' => config('mpesa.consumer_key'),
-            'consumer_secret' => config('mpesa.consumer_secret'),
-            'passkey' => config('mpesa.passkey'),
-            'callback_url' => config('mpesa.callback_url'),
-            'env' => config('mpesa.env'), // 'sandbox' or 'live'
-        ];
-        $this->mpesa = new MpesaStkpush($config);
-    }
-
     public function beforeCheckout(InitializeCheckoutRequest $request)
-{
-    \Log::info('beforeCheckout called', $request->all());
-
-    $gatewayCode      = $request->input('gateway');
-    $customerId       = $request->input('customer');
-    $cartId           = $request->input('cart');
-    $serviceQuoteId   = $request->or(['serviceQuote', 'service_quote']);
-    $isCashOnDelivery = $request->input('cash') || $gatewayCode === 'cash';
-    $isPickup         = $request->input('pickup', false);
-    $tip              = $request->input('tip', false);
-    $deliveryTip      = $request->or(['delivery_tip', 'deliveryTip'], false);
-
-    // create checkout options
-    $checkoutOptions = Utils::createObject([
-        'is_pickup'    => $isPickup,
-        'is_cod'       => $isCashOnDelivery,
-        'tip'          => $tip,
-        'delivery_tip' => $deliveryTip,
-    ]);
-
-    // find and validate cart session
-    $cart         = Cart::retrieve($cartId);
-    $gateway      = Storefront::findGateway($gatewayCode);
-    $customer     = Customer::findFromCustomerId($customerId);
-    $serviceQuote = ServiceQuote::select(['amount', 'meta', 'uuid', 'public_id'])->where('public_id', $serviceQuoteId)->first();
-
-    // Log retrieved data
-    \Log::info('Retrieved data', [
-        'cart' => $cart,
-        'gateway' => $gateway,
-        'customer' => $customer,
-        'serviceQuote' => $serviceQuote,
-    ]);
-
-    // handle cash orders
-    if ($isCashOnDelivery) {
-        return static::initializeCashCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
-    }
-
-    if (!$gateway) {
-        return response()->error('No gateway configured!');
-    }
-
-    // handle checkout initialization based on gateway
-    if ($gateway->isStripeGateway) {
-        return static::initializeStripeCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
-    }
-
-    if ($gateway->isMpesaStkGateway) {
-        return static::initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
-    }
-
-    // handle checkout initialization based on gateway
-    if ($gateway->isQpayGateway) {
-        return static::initializeQpayCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
-    }
-
-    return response()->error('Failed to initialize checkout!');
-}
-
-public function initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions)
-{
-    \Log::info('initializeMpesaSTKCheckout called', [
-        'customer' => $customer,
-        'gateway' => $gateway,
-        'serviceQuote' => $serviceQuote,
-        'cart' => $cart,
-        'checkoutOptions' => $checkoutOptions,
-    ]);
-
-    $isPickup = $checkoutOptions->is_pickup;
-
-    // get amount/subtotal
-    $amount = $this->calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions);
-    $currency = $cart->currency ?? session('storefront_currency');
-
-    // check for required MPESA configuration
-    if (!isset($gateway['mpesa_stk'])) {
-        \Log::error('Mpesa gateway configuration missing');
-        return response()->json(['error' => 'Gateway not configured correctly!'], 400);
-    }
-
-    $mpesaConfig = $gateway['mpesa_stk'];
-    $mpesaService = new MpesaStkpush($mpesaConfig);
-
-    // Log details before initiating STK push
-    \Log::info('Initiating Mpesa STK Push', [
-        'customer' => $customer,
-        'amount' => $amount,
-        'currency' => $currency,
-        'checkoutOptions' => $checkoutOptions,
-    ]);
-
-    $mpesaResponse = $mpesaService->lipaNaMpesa($amount, $this->formatPhone($customer->phone), 'Transaction#' . Str::random(10));
-
-    if (!$mpesaResponse) {
-        \Log::error('Error initiating Mpesa STK Push', ['response' => $mpesaResponse]);
-        return response()->json(['error' => 'Error initiating Mpesa STK Push'], 500);
-    }
-
-    // create checkout token
-    $checkout = Checkout::create([
-        'company_uuid'       => session('company'),
-        'store_uuid'         => session('storefront_store'),
-        'network_uuid'       => session('storefront_network'),
-        'cart_uuid'          => $cart->uuid,
-        'gateway_uuid'       => $gateway->uuid,
-        'service_quote_uuid' => $serviceQuote->uuid,
-        'owner_uuid'         => $customer->uuid,
-        'owner_type'         => 'fleet-ops:contact',
-        'amount'             => $amount,
-        'currency'           => $currency,
-        'is_pickup'          => $isPickup,
-        'options'            => $checkoutOptions,
-        'cart_state'         => $cart->toArray(),
-    ]);
-
-    return response()->json([
-        'mpesaResponse' => $mpesaResponse,
-        'token'         => $checkout->token,
-    ]);
-}
-
-    public function mpesaCallback(Request $request)
     {
-        // Log the callback request for debugging
-        Log::info('Mpesa Callback', $request->all());
+        Log::info('beforeCheckout called', $request->all());
 
-        // Process the callback data
-        $callbackData = $request->all();
-        
-        // Verify the data and update your database as needed
-        // Example: Check if the transaction was successful
-        if ($callbackData['Body']['stkCallback']['ResultCode'] == 0) {
-            // Transaction was successful
-            // Extract the required information
-            $transactionId = $callbackData['Body']['stkCallback']['CallbackMetadata']['Item'][1]['Value'];
-            $amount = $callbackData['Body']['stkCallback']['CallbackMetadata']['Item'][0]['Value'];
-            $phoneNumber = $callbackData['Body']['stkCallback']['CallbackMetadata']['Item'][4]['Value'];
+        $gatewayCode = $request->input('gateway');
+        $customerId = $request->input('customer');
+        $cartId = $request->input('cart');
+        $serviceQuoteId = $request->or(['serviceQuote', 'service_quote']);
+        $isCashOnDelivery = $request->input('cash') || $gatewayCode === 'cash';
+        $isPickup = $request->input('pickup', false);
+        $tip = $request->input('tip', false);
+        $deliveryTip = $request->or(['delivery_tip', 'deliveryTip'], false);
 
-            // Update your database with the transaction details
-            // Example:
-            // Payment::where('transaction_id', $transactionId)->update(['status' => 'completed']);
+        // create checkout options
+        $checkoutOptions = Utils::createObject([
+            'is_pickup' => $isPickup,
+            'is_cod' => $isCashOnDelivery,
+            'tip' => $tip,
+            'delivery_tip' => $deliveryTip,
+        ]);
 
-            // Optionally, you can check the transaction status here
-            $statusResponse = $this->mpesa->status($transactionId);
+        // find and validate cart session
+        $cart = Cart::retrieve($cartId);
+        $gateway = Storefront::findGateway($gatewayCode);
+        $customer = Customer::findFromCustomerId($customerId);
+        $serviceQuote = ServiceQuote::select(['amount', 'meta', 'uuid', 'public_id'])->where('public_id', $serviceQuoteId)->first();
 
-            // Check the status response and finalize the order
-            if ($statusResponse['ResponseCode'] == '0') {
-                // Complete the order
-                // Example:
-                // Order::where('transaction_id', $transactionId)->update(['status' => 'completed']);
-            }
-        } else {
-            // Transaction failed
-            // Handle the failure accordingly
+        // Log retrieved data
+        Log::info('Retrieved data', [
+            'cart' => $cart,
+            'gateway' => $gateway,
+            'customer' => $customer,
+            'serviceQuote' => $serviceQuote,
+        ]);
+
+        // handle cash orders
+        if ($isCashOnDelivery) {
+            return static::initializeCashCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
         }
 
-        // Return a response to Mpesa
-        return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Success']);
+        if (!$gateway) {
+            return response()->json(['error' => 'No gateway configured!']);
+        }
+
+        // handle checkout initialization based on gateway
+        if ($gateway->isStripeGateway) {
+            return static::initializeStripeCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
+        }
+
+        if ($gateway->isMpesaStkGateway) {
+            return static::initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions, $request);
+        }
+
+        if ($gateway->isQpayGateway) {
+            return static::initializeQpayCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions);
+        }
+
+        return response()->json(['error' => 'Failed to initialize checkout!']);
+    }
+
+    public static function initializeMpesaSTKCheckout($customer, $gateway, $serviceQuote, $cart, $checkoutOptions, Request $request)
+    {
+        Log::info('initializeMpesaSTKCheckout called', [
+            'customer' => $customer,
+            'gateway' => $gateway,
+            'serviceQuote' => $serviceQuote,
+            'cart' => $cart,
+            'checkoutOptions' => $checkoutOptions,
+        ]);
+
+        $isPickup = $checkoutOptions->is_pickup;
+
+        // get amount/subtotal
+        $amount = static::calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions);
+        $currency = $cart->currency ?? session('storefront_currency');
+
+        // get mpesa configuration from request
+        $mpesaConfig = $request->input('mpesa_stk');
+
+        if (!$mpesaConfig) {
+            Log::error('Mpesa gateway configuration missing');
+            file_put_contents(storage_path('logs/error_log.txt'), "Mpesa gateway configuration missing\n", FILE_APPEND);
+            return response()->json(['error' => 'Gateway not configured correctly!'], 400);
+        }
+
+        $mpesaService = new MpesaStkpush($mpesaConfig);
+
+        // Retrieve and format the phone number from customer information
+        $phoneNumber = static::formatPhoneNumber($customer->phone);
+
+        if (!$phoneNumber) {
+            Log::error('Invalid phone number format');
+            file_put_contents(storage_path('logs/error_log.txt'), "Invalid phone number format: {$customer->phone}\n", FILE_APPEND);
+            return response()->json(['error' => 'Invalid phone number format'], 400);
+        }
+
+        // Log details before initiating STK push
+        Log::info('Initiating Mpesa STK Push', [
+            'customer' => $customer,
+            'amount' => $amount,
+            'currency' => $currency,
+            'checkoutOptions' => $checkoutOptions,
+            'phoneNumber' => $phoneNumber,
+        ]);
+
+        $mpesaResponse = $mpesaService->lipaNaMpesa($amount, $phoneNumber, 'Transaction#' . Str::random(10));
+
+        if (!$mpesaResponse) {
+            Log::error('Error initiating Mpesa STK Push', ['response' => $mpesaResponse]);
+            file_put_contents(storage_path('logs/error_log.txt'), "Error initiating Mpesa STK Push\n", FILE_APPEND);
+            return response()->json(['error' => 'Error initiating Mpesa STK Push'], 500);
+        }
+
+        // Check for a successful transaction
+        if ($mpesaResponse['ResponseCode'] == '0') {
+            // create checkout token
+            $checkout = Checkout::create([
+                'company_uuid' => session('company'),
+                'store_uuid' => session('storefront_store'),
+                'network_uuid' => session('storefront_network'),
+                'cart_uuid' => $cart->uuid,
+                'gateway_uuid' => $gateway->uuid,
+                'service_quote_uuid' => $serviceQuote->uuid,
+                'owner_uuid' => $customer->uuid,
+                'owner_type' => 'fleet-ops:contact',
+                'amount' => $amount,
+                'currency' => $currency,
+                'is_pickup' => $isPickup,
+                'options' => $checkoutOptions,
+                'cart_state' => $cart->toArray(),
+            ]);
+
+            return response()->json([
+                'mpesaResponse' => $mpesaResponse,
+                'token' => $checkout->token,
+            ]);
+        } else {
+            Log::error('Mpesa STK Push transaction failed', ['response' => $mpesaResponse]);
+            file_put_contents(storage_path('logs/error_log.txt'), "Mpesa STK Push transaction failed\n", FILE_APPEND);
+            return response()->json(['error' => 'Mpesa STK Push transaction failed'], 500);
+        }
+    }
+
+    public static function calculateCheckoutAmount($cart, $serviceQuote, $checkoutOptions)
+    {
+        $amount = $cart->total;
+
+        if ($serviceQuote) {
+            $amount += $serviceQuote->amount;
+        }
+
+        if ($checkoutOptions->tip) {
+            $amount += $checkoutOptions->tip;
+        }
+
+        if ($checkoutOptions->delivery_tip) {
+            $amount += $checkoutOptions->delivery_tip;
+        }
+
+        return $amount;
+    }
+
+    private static function formatPhoneNumber($phone)
+    {
+        $phone = preg_replace('/\D/', '', $phone);
+        if (preg_match('/^(?:254|\+254|0)?(1|7)\d{8}$/', $phone, $matches)) {
+            return '254' . $matches[1] . substr($phone, -7);
+        }
+        return false;
     }
        public static function initializeCashCheckout(Contact $customer, Gateway $gateway, ServiceQuote $serviceQuote, Cart $cart, $checkoutOptions)
     {
